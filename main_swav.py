@@ -9,6 +9,7 @@ import math
 import os
 import shutil
 import time
+from pathlib import Path
 from logging import getLogger
 
 import numpy as np
@@ -132,6 +133,9 @@ parser.add_argument('--patch_size', default=16, type=int, help="""Size in pixels
 def main():
     global args
     args = parser.parse_args()
+    if args.output_dir:
+        Path(args.dump_path).mkdir(parents=True, exist_ok=True)
+
     init_distributed_mode(args)
     fix_random_seeds(args.seed)
     logger, training_stats = initialize_exp(args, "epoch", "loss")
