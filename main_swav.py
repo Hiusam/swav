@@ -21,6 +21,7 @@ import torch.distributed as dist
 import torch.optim
 import apex
 from apex.parallel.LARC import LARC
+import src.vision_transformer as vits
 
 from src.utils import (
     bool_flag,
@@ -92,7 +93,8 @@ parser.add_argument("--start_warmup", default=0, type=float,
 #########################
 parser.add_argument("--dist_url", default="env://", type=str, help="""url used to set up distributed
                     training; see https://pytorch.org/docs/stable/distributed.html""")
-parser.add_argument("--world_size", default=-1, type=int, help="""
+parser.add_argument("--distributed", default=True, type=bool, help="""using distributed mode or not""")
+parser.add_argument("--world_size", default=1, type=int, help="""
                     number of processes: it is set automatically and
                     should not be passed as argument""")
 parser.add_argument("--rank", default=0, type=int, help="""rank of this process:
@@ -103,7 +105,7 @@ parser.add_argument("--local_rank", default=0, type=int,
 #########################
 #### other parameters ###
 #########################
-parser.add_argument("--arch", default="resnet50", type=str, help="convnet architecture")
+parser.add_argument("--arch", default="resnet50", type=str, help="convnet architecture or vision transformer", choices=['resnet50', 'vit_tiny', 'vit_small', 'vit_base'])
 parser.add_argument("--hidden_mlp", default=2048, type=int,
                     help="hidden layer dimension in projection head")
 parser.add_argument("--workers", default=10, type=int,
@@ -115,9 +117,16 @@ parser.add_argument("--use_fp16", type=bool_flag, default=True,
 parser.add_argument("--sync_bn", type=str, default="pytorch", help="synchronize bn")
 parser.add_argument("--syncbn_process_group_size", type=int, default=8, help=""" see
                     https://github.com/NVIDIA/apex/blob/master/apex/parallel/__init__.py#L58-L67""")
-parser.add_argument("--dump_path", type=str, default=".",
+parser.add_argument("--dump_path", type=str, default="../output/20210709",
                     help="experiment dump path for checkpoints and log")
 parser.add_argument("--seed", type=int, default=31, help="seed")
+
+# ViT parameters
+parser.add_argument('--patch_size', default=16, type=int, help="""Size in pixels
+        of input square patches - default 16 (for 16x16 patches). Using smaller
+        values leads to better performance but requires more memory. Applies only
+        for ViTs (vit_tiny, vit_small and vit_base). If <16, we recommend disabling
+        mixed precision training (--use_fp16 false) to avoid unstabilities.""")
 
 
 def main():
@@ -147,12 +156,24 @@ def main():
     logger.info("Building data done with {} images loaded.".format(len(train_dataset)))
 
     # build model
-    model = resnet_models.__dict__[args.arch](
-        normalize=True,
-        hidden_mlp=args.hidden_mlp,
-        output_dim=args.feat_dim,
-        nmb_prototypes=args.nmb_prototypes,
-    )
+    if args.arch in vits.__dict__.keys():
+        # transformer
+        model = vits.__dict__[args.arch](
+            normalize=False,
+            num_classes=args.feat_dim,
+            nmb_prototypes=args.nmb_prototypes,
+            patch_size=args.patch_size,
+            drop_path_rate=0.1
+        )
+    else:
+        # resnet
+        model = resnet_models.__dict__[args.arch](
+            normalize=True,
+            hidden_mlp=args.hidden_mlp,
+            output_dim=args.feat_dim,
+            nmb_prototypes=args.nmb_prototypes,
+        )
+
     # synchronize batch norm layers
     if args.sync_bn == "pytorch":
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
